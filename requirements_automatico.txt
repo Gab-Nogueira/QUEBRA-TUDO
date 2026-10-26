@@ -1,0 +1,5 @@
+-r requirements.txt
+faster-whisper==1.2.1
+# faster-whisper 1.2.1 usa metadata_errors, removido nas versões mais novas do PyAV.
+av==15.1.0
+ddddocr==1.6.1

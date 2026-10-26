@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<title>Demonstração local de consulta assistida</title>
+<style>
+  body { font: 18px system-ui; max-width: 680px; margin: 48px auto; padding: 20px; }
+  label { display: block; margin: 20px 0 8px; }
+  input, button { padding: 10px; font: inherit; }
+  #erro { color: #9b1727; }
+  #resultado { padding: 16px; background: #eef5ee; margin-top: 20px; }
+</style>
+<h1>Consulta assistida · demonstração</h1>
+<p>Esta página funciona somente como teste local. Todos os dados são fictícios.</p>
+<form id="formulario">
+  <label for="documento">Documento fictício</label>
+  <input id="documento" required autocomplete="off">
+  <label for="confirmacao">Digite <strong>TESTE</strong> para simular a etapa manual</label>
+  <input id="confirmacao" autocomplete="off">
+  <p>A etapa acima é uma simulação, sem CAPTCHA ou reCAPTCHA real.</p>
+  <button id="consultar">Consultar</button>
+</form>
+<p id="erro" role="alert" hidden></p>
+<section id="resultado" hidden>
+  <p>Documento: <span id="documento_resultado"></span></p>
+  <p>Nome: <span id="nome"></span></p>
+  <p>Situação: <span id="situacao"></span></p>
+</section>
+<script>
+document.querySelector('#formulario').addEventListener('submit', event => {
+  event.preventDefault();
+  const erro = document.querySelector('#erro');
+  const resultado = document.querySelector('#resultado');
+  erro.hidden = true;
+  resultado.hidden = true;
+  if (document.querySelector('#confirmacao').value !== 'TESTE') {
+    erro.textContent = 'Etapa manual não confirmada. Digite TESTE.';
+    erro.hidden = false;
+    return;
+  }
+  document.querySelector('#documento_resultado').textContent = document.querySelector('#documento').value;
+  document.querySelector('#nome').textContent = 'Empresa de demonstração';
+  document.querySelector('#situacao').textContent = 'DADO FICTÍCIO';
+  resultado.hidden = false;
+});
+</script>
+</html>

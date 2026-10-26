@@ -1,0 +1,7 @@
+__pycache__/
+resultados/
+evidencias_recaptcha/
+evidencias_correios/
+web_demo/qa/
+config.local.json
+*.pyc

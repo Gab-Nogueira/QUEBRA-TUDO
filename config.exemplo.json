@@ -1,0 +1,16 @@
+{
+  "url": "https://endereco-do-site.invalid/consulta",
+  "navegador": "msedge",
+  "timeout_segundos": 30,
+  "campos": {
+    "documento": "#documento"
+  },
+  "botao_consultar": "#consultar",
+  "resultado_pronto": "#resultado",
+  "erro_consulta": "#erro",
+  "campos_resultado": {
+    "documento": "#documento_resultado",
+    "nome": "#nome",
+    "situacao": "#situacao"
+  }
+}
