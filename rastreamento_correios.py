@@ -3,13 +3,18 @@
 import argparse
 from datetime import date, datetime, timedelta, timezone
 import json
+from pathlib import Path
 import re
+import subprocess
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from playwright.sync_api import sync_playwright
 
-from .captcha_letras import LeitorLetras
+from captcha_letras import LeitorLetras
+from capturas_execucao import capturar_etapa
 
+ROOT = Path(__file__).resolve().parent
 URL = "https://rastreamento.correios.com.br/app/index.php"
 
 
@@ -72,9 +77,11 @@ def main(argv=None) -> int:
     parser.add_argument("--navegador", choices=("chrome", "msedge", "chromium"), default="chrome")
     parser.add_argument("--manter-aberto", action="store_true", help="Aguarda ENTER antes de fechar a janela")
     parser.add_argument("--headless", action="store_true", help="Executa o Chrome sem abrir uma janela")
-    parser.add_argument("--sem-copiar", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--json-stdout", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--sem-copiar", action="store_true", help="Não altera a área de transferência deste computador")
     args = parser.parse_args(argv)
+    pasta = ROOT / "evidencias_correios" / uuid4().hex[:12]
+    pasta.mkdir(parents=True, exist_ok=False)
+    print(f"Evidências: {pasta}", flush=True)
     relato = {"url": URL, "data_hora_utc": datetime.now(timezone.utc).isoformat(), "resultado": "inconclusivo",
               "consulta_confirmada": False, "captcha_validado_pelo_servidor": False, "tentativas": []}
     codigo_saida = 2
@@ -94,19 +101,27 @@ def main(argv=None) -> int:
                     imagem = page.locator("#captcha_image")
                     imagem.wait_for(state="visible")
                     imagem.evaluate("img => img.decode()")
-                    conteudo = imagem.screenshot()
+                    conteudo = imagem.screenshot(path=str(pasta / f"captcha-{tentativa:02d}.png"))
+                    capturar_etapa(page, pasta, "Imagem do CAPTCHA nos Correios")
                     leitura = leitor.ler(conteudo)
                     relato["tentativas"].append(leitura)
                     print(f"\nCAPTCHA RECONHECIDO: {leitura['texto']}", flush=True)
                     if leitura["alternativas"]:
                         print("Outras leituras possíveis: " + ", ".join(leitura["alternativas"]))
                     page.locator("#captcha").fill(leitura["texto"])
+                    if not args.sem_copiar:
+                        try:
+                            subprocess.run(["clip.exe"], input=leitura["texto"], text=True, encoding="utf-8", check=True, timeout=5)
+                            print("Texto copiado. O campo do CAPTCHA no Chrome também foi preenchido.")
+                        except (OSError, subprocess.SubprocessError):
+                            print("O campo do CAPTCHA foi preenchido. A cópia para a área de transferência não ficou disponível.")
                     if not objeto:
                         relato["resultado"] = "leitura_realizada_sem_consulta"
                         codigo_saida = 0
                         break
                     page.locator("#objeto").fill(objeto)
                     src_anterior = imagem.get_attribute("src")
+                    capturar_etapa(page, pasta, "Letras preenchidas automaticamente")
                     with page.expect_response(resposta_rastreamento, timeout=30000) as retorno:
                         page.locator("#b-pesquisar").click()
                     resposta_consulta = retorno.value
@@ -151,12 +166,20 @@ def main(argv=None) -> int:
                     print("\nO Chrome permanece na mesma sessão da imagem lida.")
                     input("Pressione ENTER aqui quando quiser fechar essa janela e voltar ao menu. ")
             finally:
+                if page and not page.is_closed():
+                    try:
+                        capturar_etapa(page, pasta, "Resposta exibida pelos Correios")
+                        page.screenshot(path=str(pasta / "tela.png"), full_page=True, timeout=5000)
+                    except Exception:
+                        pass
                 browser.close()
     except (Exception, KeyboardInterrupt) as exc:
         relato["erro"] = str(exc) or "Execução interrompida."
-    if args.json_stdout:
-        print("RELATORIO_JSON:" + json.dumps(relato, ensure_ascii=False, separators=(",", ":")), flush=True)
-    if relato["consulta_confirmada"]:
+        relato["resultado"] = "interrompido" if isinstance(exc, KeyboardInterrupt) else "erro_tecnico"
+        codigo_saida = 2
+    (pasta / "resultado.json").write_text(json.dumps(relato, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\nEvidências: {pasta}")
+    if codigo_saida == 0 and relato["consulta_confirmada"]:
         print("DEU CERTO! Os Correios confirmaram a consulta deste objeto.")
     elif relato["resultado"] == "leitura_realizada_sem_consulta":
         print("LEITURA CONCLUÍDA. O texto foi mostrado no CMD. Ainda não houve consulta para validar o CAPTCHA.")

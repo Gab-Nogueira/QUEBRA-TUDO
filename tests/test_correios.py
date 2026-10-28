@@ -5,8 +5,8 @@ from pathlib import Path
 import sys
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from consulta_assistida.rastreamento_correios import normalizar_objeto, resumir_rastreamento
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from rastreamento_correios import normalizar_objeto, resumir_rastreamento
 
 
 class RastreamentoTests(unittest.TestCase):

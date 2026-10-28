@@ -1,72 +1,42 @@
-# Quebra Tudo — Consulta Assistida
+# Quebra Tudo — versão local revisada
 
-Versão atualizada em 27/10/2026, com código organizado em `src/`, testes locais e resultados mantidos em memória. Repositório: https://github.com/Gab-Nogueira/QUEBRA-TUDO.
+Versão de 28/10/2026 para execução local no Windows, com Correios, demonstração reCAPTCHA, teste do desafio TJSP, consulta pública do TRF3 por CNPJ e consulta pública do STJ por nome.
 
-Para abrir no Windows, use **INICIAR_WEB.cmd** na pasta principal. Em uma instalação nova, execute **INSTALAR_AUTOMATICO.cmd** primeiro. Os atalhos também estão disponíveis em `scripts/`.
+Esta versão mantém capturas, relatórios e histórico no computador que executa o serviço. É uma alternativa à versão modular com resultados em memória; não inclui implantação na Vercel.
 
-Projeto local em Python para consultas web acompanhadas pelo operador e demonstrações de navegador.
+## Executar
 
-## O que contém
+1. Instale Python 3.10 ou superior e Google Chrome. Os testes da base genérica também utilizam Microsoft Edge.
+2. Execute `INSTALAR_AUTOMATICO.cmd` para instalar o ambiente e as dependências.
+3. Execute `INICIAR_WEB.cmd` e abra `http://localhost:5085`.
+4. Para outra porta, execute `INICIAR_WEB.cmd --port 5086`.
 
-- Uma base configurável com Playwright para preencher formulários e exibir os dados retornados.
-- Experimentos locais de rastreamento dos Correios e reconhecimento de CAPTCHA.
-- Uma interface web local para acompanhar execuções temporárias.
-- Testes com dados fictícios e uma página local.
+O ambiente fica em `%LOCALAPPDATA%\CyolaConsultaAssistida\venv`. O launcher confere a pasta, a revisão do código e a configuração do Chrome antes de reutilizar um serviço. Se outra versão ocupar a porta, use uma porta livre ou encerre a instância anterior quando estiver ociosa.
 
-## Começar no Windows
+O servidor permite acesso pela rede local e não tem autenticação própria. TJSP, TRF3 e STJ abrem uma janela do Chrome no computador servidor. Correios e Google utilizam o modo sem janela na configuração padrão.
 
-```powershell
-.\scripts\INSTALAR.ps1
-.\scripts\INICIAR.ps1 --demo
-```
+## Escopo dos resultados
 
-Para abrir a interface web, use `scripts\INICIAR_WEB.cmd`. Para instalar as dependências dos experimentos, use `scripts\INSTALAR_AUTOMATICO.cmd` e depois `scripts\TESTAR_RECAPTCHA.cmd`.
+- Correios: a tela usa um código de exemplo, que não representa uma encomenda do usuário. O terminal permite informar outro código.
+- Google: a confirmação depende da resposta do formulário oficial da demonstração.
+- TJSP: verifica somente a liberação do desafio; não envia pesquisa processual.
+- TRF3: pesquisa pública de primeiro grau por CNPJ numérico, com conferência do documento e do total coletado.
+- STJ: pesquisa por nome, sem confirmação de vínculo a CNPJ.
 
-Consulte [docs/uso.md](docs/uso.md) para configuração e detalhes de execução.
+Paginação de TRF3/STJ e andamentos detalhados do STJ ainda não estão implementados. Listas incompletas permanecem parciais. Portais externos podem bloquear ou falhar; uma execução confirmada não estabelece taxa de acerto.
 
-## Implantar na Vercel
+## Arquivos locais
 
-O repositório inclui configuração para importar o projeto na Vercel. O build prepara os arquivos estáticos e o Chromium headless. A interface aguarda cada execução terminar antes de mostrar o resultado; o processamento de Correios e CAPTCHA continua usando os mesmos módulos Python.
+As pastas `evidencias_*` armazenam resultados, capturas e, quando aplicável, áudio. O estado do servidor fica em `%LOCALAPPDATA%\CyolaConsultaAssistida\web_demo_IDENTIFICADOR_PORTA`, separado por projeto e porta. Esses arquivos, configurações particulares, backups e relatórios de consultas reais ficam fora do Git.
 
-Na Vercel, as consultas rodam na infraestrutura remota. O modelo de áudio é baixado para `/tmp` e pode ser baixado novamente quando a instância for reiniciada. Resultados e histórico continuam apenas em memória; nenhum arquivo de consulta é criado. A duração da execução é limitada a 270 segundos.
-
-Antes de compartilhar o endereço, restrinja o acesso ao deployment pela proteção de acesso da Vercel: os endpoints iniciam consultas e consomem recursos do projeto.
-
-## Dados e privacidade
-
-O programa não grava consultas, resultados, capturas, áudios, histórico ou logs. A interface mantém os dados temporariamente em memória e os descarta quando o serviço é encerrado. Os resultados aparecem na tela durante a execução.
-
-Os campos informados ainda são enviados ao site consultado. O ambiente virtual, as dependências e os modelos de reconhecimento continuam armazenados em `%LOCALAPPDATA%\CyolaConsultaAssistida`; eles são componentes do programa, não registros das consultas. A configuração `config.local.json`, se criada por você, também continua sendo um arquivo local.
-
-Pastas antigas de resultados e evidências são ignoradas pelo Git. O programa não as lê nem cria novas evidências. Arquivos que já existiam foram preservados.
-
-## Estrutura
-
-```text
-src/consulta_assistida/   Código Python do projeto
-  web_demo/               Interface e servidor de demonstração
-  fixtures/               Página fictícia usada nos testes
-tests/                    Testes automatizados
-scripts/                  Atalhos de instalação e execução no Windows
-docs/                     Guia de uso
-```
-
-## Desenvolvimento
-
-Instale o projeto e as dependências base:
+## Testes
 
 ```powershell
-python -m pip install -e .
+& "$env:LOCALAPPDATA\CyolaConsultaAssistida\venv\Scripts\python.exe" -m unittest discover -s tests -v
 ```
 
-Para os módulos experimentais e a interface web:
+Os testes usam dados fictícios, mocks e páginas locais. Não iniciam consultas externas. A revisão adicionou verificações de falhas de inicialização, fila, classificação de resultados, identidade da instância, histórico inválido e interface no Chrome.
 
-```powershell
-python -m pip install -e ".[automatico,web]"
-```
+Para a base genérica com etapa manual, execute `INSTALAR.ps1` e depois `INICIAR.ps1 --demo`. Para adaptar outra consulta, use `config.exemplo.json` como referência e configure a URL e os seletores reais em `config.local.json`.
 
-Para executar os testes:
-
-```powershell
-python -m unittest discover -s tests -v
-```
+Veja [as alterações desta revisão](CHANGELOG.md).

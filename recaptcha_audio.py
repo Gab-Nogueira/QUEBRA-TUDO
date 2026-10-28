@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import time
 
-from io import BytesIO
+from capturas_execucao import capturar_etapa
 
 
 class ResolucaoAudioError(Exception):
@@ -25,18 +25,16 @@ class TranscritorLocal:
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
-            raise ResolucaoAudioError("dependencia_ausente", "Execute scripts/INSTALAR_AUTOMATICO.cmd para instalar o reconhecimento local.") from exc
+            raise ResolucaoAudioError("dependencia_ausente", "Execute INSTALAR_AUTOMATICO.cmd para instalar o reconhecimento local.") from exc
         self.modelo = modelo
-        cache_configurada = os.environ.get("CYOLA_MODEL_CACHE_DIR")
-        cache = (Path(cache_configurada) if cache_configurada else
-                 Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CyolaConsultaAssistida" / "modelos")
+        cache = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CyolaConsultaAssistida" / "modelos"
         print(f"Carregando modelo local {modelo}. Na primeira vez, os arquivos serão baixados...", flush=True)
         self.reconhecedor = WhisperModel(modelo, device="cpu", compute_type="int8", cpu_threads=2,
                                         num_workers=1, download_root=str(cache))
         print("Reconhecimento local pronto.", flush=True)
 
-    def transcrever(self, conteudo: bytes) -> str:
-        segmentos, _ = self.reconhecedor.transcribe(BytesIO(conteudo), language="en", beam_size=5,
+    def transcrever(self, arquivo: Path) -> str:
+        segmentos, _ = self.reconhecedor.transcribe(str(arquivo), language="en", beam_size=5,
                                                    condition_on_previous_text=False, vad_filter=False)
         bruto = " ".join(segmento.text.strip() for segmento in segmentos)
         return " ".join(re.sub(r"[^a-zA-Z0-9' ]", " ", bruto).lower().split())
@@ -62,7 +60,7 @@ def aguardar_audio(page, frame) -> str:
     raise ResolucaoAudioError("audio_indisponivel", "O desafio não disponibilizou um arquivo de áudio no prazo.")
 
 
-def resolver_audio(page, transcritor: TranscritorLocal, relato: dict) -> bool:
+def resolver_audio(page, pasta: Path, transcritor: TranscritorLocal, relato: dict) -> bool:
     frame = page.frame_locator('iframe[src*="/recaptcha/api2/bframe"]')
     caixa = page.frame_locator('iframe[src*="/recaptcha/api2/anchor"]').locator("#recaptcha-anchor")
     verificar_bloqueio(frame)
@@ -84,8 +82,11 @@ def resolver_audio(page, transcritor: TranscritorLocal, relato: dict) -> bool:
         conteudo = resposta.body()
         if not conteudo or len(conteudo) > 5_000_000:
             raise ResolucaoAudioError("audio_invalido", "O arquivo de áudio está vazio ou fora do tamanho esperado.")
+        arquivo = pasta / f"audio-{numero:02d}.mp3"
+        arquivo.write_bytes(conteudo)
+        capturar_etapa(page, pasta, "Desafio de áudio disponível")
         inicio = time.monotonic()
-        texto = transcritor.transcrever(conteudo)
+        texto = transcritor.transcrever(arquivo)
         tentativa = {"numero": numero, "transcricao": texto, "duracao_transcricao_segundos": round(time.monotonic() - inicio, 2),
                      "aceita_pelo_widget": False}
         tentativas.append(tentativa)
@@ -93,6 +94,7 @@ def resolver_audio(page, transcritor: TranscritorLocal, relato: dict) -> bool:
             raise ResolucaoAudioError("transcricao_vazia", "O modelo local não reconheceu fala no áudio recebido.")
         print(f"Tentativa {numero}: transcrição local concluída; enviando resposta...", flush=True)
         frame.locator("#audio-response").fill(texto)
+        capturar_etapa(page, pasta, "Transcrição preenchida automaticamente")
         frame.locator("#recaptcha-verify-button").click()
         prazo = time.monotonic() + 20
         page.wait_for_timeout(750)

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#173f36">
+  <title>Consultas e CAPTCHA — teste ao vivo</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23173f36'/%3E%3Cpath d='m10 20 7 7 14-15' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css?v=5">
+  <script src="/static/app.js?v=7" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="page-header"><a href="/" class="brand"><span class="brand-icon">✓</span> Teste de CAPTCHA</a><span class="connection" id="connection">Conectando…</span></header>
+    <section class="intro"><span class="eyebrow">CONSULTAS AO VIVO</span><h1>Consultas e CAPTCHA.</h1><p>Execute uma consulta ou teste e acompanhe as capturas do Chrome e a resposta do site.</p></section>
+    <div class="test-choices" aria-label="Escolha um teste">
+      <button class="test-choice" id="test-letras" data-test="letras"><span class="choice-icon letters-icon">Aa</span><span class="choice-text"><strong>Letras</strong><span>Reconhecer e validar nos Correios</span></span><span class="choice-arrow">→</span></button>
+      <button class="test-choice" id="test-recaptcha" data-test="recaptcha"><span class="choice-icon">☑</span><span class="choice-text"><strong>reCAPTCHA</strong><span>Resolver e confirmar no Google</span></span><span class="choice-arrow">→</span></button>
+      <button class="test-choice" id="test-cloudflare" data-test="cloudflare"><span class="choice-icon">☁</span><span class="choice-text"><strong>Cloudflare · TJSP</strong><span>Abrir o Chrome e testar o desafio</span></span><span class="choice-arrow">→</span></button>
+      <div class="test-choice trf3-choice"><span class="choice-icon">§</span><div class="choice-text"><strong>TRF3 · CNPJ</strong><label for="trf3-cnpj">Digite o CNPJ da empresa</label><input id="trf3-cnpj" type="text" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00" autocomplete="off" required></div><button id="test-trf3" class="trf3-submit" data-test="trf3">Consultar →</button></div>
+      <div class="test-choice trf3-choice stj-choice"><span class="choice-icon">§</span><div class="choice-text"><strong>STJ · Nome da parte</strong><label for="stj-parte">Digite o nome da parte — o STJ não pesquisa por CPF/CNPJ</label><textarea id="stj-parte" rows="2" maxlength="160" placeholder="Nome da empresa ou da parte" required></textarea></div><button id="test-stj" class="trf3-submit" data-test="stj">Consultar →</button></div>
+    </div>
+    <p class="page-note">Cada clique inicia uma nova tentativa. Letras usa um código de exemplo dos Correios. TJSP testa somente a liberação do desafio, sem consultar processos.</p>
+    <p class="error-message" id="request-error" role="alert" hidden></p>
+    <section class="empty-state" id="empty-state"><span class="empty-icon">↗</span><h2>Escolha uma consulta ou teste acima.</h2><p>As capturas e o resultado desta tentativa aparecem aqui.</p></section>
+    <section class="execution" id="execution" hidden aria-label="Execução e evidências">
+      <div class="run-header"><div><span class="run-label" id="run-kind"></span><div class="run-meta"><span id="run-id"></span><span id="run-time"></span></div></div><span class="status-badge" id="run-status">EM ANDAMENTO</span></div>
+      <div class="proof-layout">
+        <article class="browser-view"><div class="browser-bar"><span class="window-dots"><i></i><i></i><i></i></span><span id="source-host"></span><a id="source-link" target="_blank" rel="noopener noreferrer" aria-label="Abrir o site de origem">↗</a></div><div class="capture-area"><div class="capture-placeholder" id="capture-placeholder"><span class="spinner"></span><p>Aguardando a primeira captura do Chrome…</p></div><img id="capture-image" alt="Captura do navegador durante esta execução" hidden></div><div class="capture-caption"><span id="capture-title">Captura desta execução</span><a id="enlarge-capture" target="_blank" rel="noopener noreferrer" hidden>Ampliar ↗</a></div><div class="frames" id="frames" aria-label="Etapas capturadas"></div></article>
+        <aside class="result-panel"><div id="result-content" aria-live="polite"></div><div class="run-actions" id="run-actions" hidden><a class="download-link" id="download-report">Baixar registro desta tentativa ↓</a></div></aside>
+      </div>
+      <p class="evidence-note">As imagens e o registro pertencem à mesma execução. No TJSP, a liberação do desafio não confirma uma consulta processual.</p>
+    </section>
+    <footer>Letras: Correios · reCAPTCHA: Google · Cloudflare: TJSP · CNPJ: TRF3, 1º grau · Nome da parte: STJ</footer>
+  </main>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

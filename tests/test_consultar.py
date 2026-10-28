@@ -1,13 +1,15 @@
 """Verificações com Edge real e página fictícia, sem resolver CAPTCHAs externos."""
 
+import csv
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from consulta_assistida.consultar import (ConsultaError, aguardar_resultado, config_demo, consultar_pagina,
-                                          criar_relatorio, executar_consulta, validar_config)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from consultar import (ConsultaError, aguardar_resultado, config_demo, consultar_pagina,
+                       executar_consulta, salvar_resultado, validar_config)
 from playwright.sync_api import sync_playwright
 
 
@@ -35,7 +37,7 @@ class FluxoLocalTests(unittest.TestCase):
     def tearDown(self):
         self.context.close()
 
-    def test_consulta_mantem_o_resultado_em_memoria_sem_exportar(self):
+    def test_consulta_exporta_o_documento_consultado_sem_sobrescrever(self):
         chamadas = []
 
         def operador(prompt):
@@ -48,9 +50,18 @@ class FluxoLocalTests(unittest.TestCase):
         dados = consultar_pagina(self.page, self.config, {"documento": "DEMO-456"}, operador)
         self.assertEqual(len(chamadas), 2)
         self.assertEqual(dados, {"documento": "DEMO-456", "nome": "Empresa de demonstração", "situacao": "DADO FICTÍCIO"})
-        relatorio = criar_relatorio(self.config, {"documento": "DEMO-456"}, dados, demo=True)
-        self.assertEqual(relatorio["modo"], "demonstracao")
-        self.assertEqual(relatorio["resultado"]["documento"], "DEMO-456")
+        with tempfile.TemporaryDirectory() as temp:
+            destino = Path(temp)
+            primeira = salvar_resultado(destino, self.config, {"documento": "DEMO-456"}, dados, demo=True)
+            original = (primeira / "resultado.json").read_bytes()
+            segunda = salvar_resultado(destino, self.config, {"documento": "DEMO-789"}, dados, demo=True)
+            self.assertNotEqual(primeira, segunda)
+            self.assertEqual(original, (primeira / "resultado.json").read_bytes())
+            payload = json.loads(original)
+            self.assertEqual(payload["modo"], "demonstracao")
+            self.assertEqual(payload["resultado"]["documento"], "DEMO-456")
+            with (primeira / "resultado.csv").open(encoding="utf-8-sig", newline="") as handle:
+                self.assertEqual(list(csv.DictReader(handle, delimiter=";")), [dados])
 
     def test_etapa_manual_incompleta_retorna_erro_do_site(self):
         with self.assertRaisesRegex(ConsultaError, "Etapa manual não confirmada"):
@@ -83,10 +94,14 @@ class EntradaESaidaTests(unittest.TestCase):
             with self.subTest(valores=valores), self.assertRaises(ConsultaError):
                 executar_consulta(config_demo(), valores, permitir_demo=True)
 
-    def test_relatorio_temporario_preserva_o_texto_recebido(self):
-        dados = {"nome": '=HYPERLINK("exemplo")'}
-        relatorio = criar_relatorio(config_demo(), {}, dados, demo=True)
-        self.assertEqual(relatorio["resultado"], dados)
+    def test_texto_de_resultado_nao_vira_formula_no_csv(self):
+        with tempfile.TemporaryDirectory() as temp:
+            pasta = salvar_resultado(Path(temp), config_demo(), {}, {"nome": '=HYPERLINK("exemplo")'}, demo=True)
+            with (pasta / "resultado.csv").open(encoding="utf-8-sig", newline="") as handle:
+                linhas = list(csv.reader(handle, delimiter=";"))
+            self.assertTrue(linhas[1][0].startswith("'="))
+            payload = json.loads((pasta / "resultado.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["resultado"]["nome"], '=HYPERLINK("exemplo")')
 
 
 if __name__ == "__main__":

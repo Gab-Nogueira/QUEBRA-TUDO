@@ -11,7 +11,7 @@ class LeitorLetras:
         try:
             import ddddocr
         except ImportError as exc:
-            raise RuntimeError("Execute scripts/INSTALAR_AUTOMATICO.cmd para instalar o leitor de letras.") from exc
+            raise RuntimeError("Execute INSTALAR_AUTOMATICO.cmd para instalar o leitor de letras.") from exc
         self.modelos = [("padrao", ddddocr.DdddOcr(show_ad=False)),
                         ("beta", ddddocr.DdddOcr(show_ad=False, beta=True))]
 
