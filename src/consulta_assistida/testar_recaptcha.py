@@ -3,18 +3,14 @@
 import argparse
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 import time
-from uuid import uuid4
 
-from playwright.sync_api import Error as PlaywrightError, sync_playwright
+from playwright.sync_api import sync_playwright
 
-from recaptcha_audio import ResolucaoAudioError, TranscritorLocal, resolver_audio
-from capturas_execucao import capturar_etapa
+from .recaptcha_audio import ResolucaoAudioError, TranscritorLocal, resolver_audio
 
 
 URL = "https://www.google.com/recaptcha/api2/demo"
-ROOT = Path(__file__).resolve().parent
 
 
 def mensagem_resultado(relato: dict, codigo: int) -> str:
@@ -27,15 +23,14 @@ def mensagem_resultado(relato: dict, codigo: int) -> str:
     return "TESTE INCONCLUSIVO. Houve um erro ou a aprovação pelo Google não foi confirmada."
 
 
-def selecionar_imagens(page, pasta: Path) -> bool:
+def selecionar_imagens(page) -> bool:
     """Bancada interativa: a seleção é orientada pelo operador, sem modelo embutido."""
     desafio = page.frame_locator('iframe[src*="/recaptcha/api2/bframe"]')
     caixa = page.frame_locator('iframe[src*="/recaptcha/api2/anchor"]').locator("#recaptcha-anchor")
     for etapa in range(1, 16):
         if caixa.get_attribute("aria-checked") == "true":
             return True
-        page.screenshot(path=str(pasta / f"etapa-{etapa:02d}.png"), full_page=True)
-        print(f"ETAPA {etapa}: {pasta / f'etapa-{etapa:02d}.png'}", flush=True)
+        print(f"ETAPA {etapa}: observe o desafio no navegador; nenhuma captura sera salva.", flush=True)
         print(desafio.locator("body").inner_text(), flush=True)
         comando = input("Posições da grade em ordem de leitura (ex.: 1 5 9), v para verificar, q para sair: ").strip()
         if comando.lower() == "q":
@@ -63,11 +58,9 @@ def main(argv=None) -> int:
     parser.add_argument("--preparar-modelo", action="store_true", help="Instala o modelo local sem abrir o navegador")
     parser.add_argument("--navegador", choices=("chrome", "msedge", "chromium"), default="chrome")
     parser.add_argument("--headless", action="store_true", help="Executa o Chrome sem abrir uma janela")
+    parser.add_argument("--json-stdout", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     automatico = not args.interativo and not args.apenas_clique
-    pasta = ROOT / "evidencias_recaptcha" / uuid4().hex[:12]
-    pasta.mkdir(parents=True, exist_ok=False)
-    print(f"Evidências: {pasta}", flush=True)
     relato = {
         "url": URL,
         "data_hora_utc": datetime.now(timezone.utc).isoformat(),
@@ -90,7 +83,7 @@ def main(argv=None) -> int:
         if transcritor:
             relato["modelo_local"] = args.modelo
         if args.preparar_modelo:
-            print("Modelo pronto. Execute TESTAR_RECAPTCHA.cmd para iniciar a resolução automática.")
+            print("Modelo pronto. Execute scripts/TESTAR_RECAPTCHA.cmd para iniciar a resolução automática.")
             return 0
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel=None if args.navegador == "chromium" else args.navegador, headless=args.headless)
@@ -103,7 +96,6 @@ def main(argv=None) -> int:
                 relato["http_status"] = resposta.status if resposta else None
                 caixa = page.frame_locator('iframe[src*="/recaptcha/api2/anchor"]').locator("#recaptcha-anchor")
                 caixa.wait_for(state="visible")
-                capturar_etapa(page, pasta, "Demonstração oficial do Google")
                 print("Clicando uma vez na caixa da demonstração oficial...", flush=True)
                 caixa.click()
                 prazo = time.monotonic() + 20
@@ -115,12 +107,11 @@ def main(argv=None) -> int:
                     relato["desafio_adicional_visivel"] = bool(desafio.count() and desafio.is_visible())
                     relato["desafio_adicional_foi_exigido"] |= relato["desafio_adicional_visivel"]
                     if relato["desafio_adicional_visivel"]:
-                        capturar_etapa(page, pasta, "Desafio apresentado pelo Google")
                         if args.interativo:
                             relato["metodo"] = "Seleção de imagens orientada pelo operador"
-                            selecionar_imagens(page, pasta)
+                            selecionar_imagens(page)
                         elif automatico:
-                            relato["resolucao_automatica_local"] = resolver_audio(page, pasta, transcritor, relato)
+                            relato["resolucao_automatica_local"] = resolver_audio(page, transcritor, relato)
                         relato["checkbox_marcado"] = caixa.get_attribute("aria-checked") == "true"
                         relato["resposta_emitida"] = bool(resposta_widget.count() and resposta_widget.input_value())
                     if relato["checkbox_marcado"] and relato["resposta_emitida"]:
@@ -134,7 +125,6 @@ def main(argv=None) -> int:
                             mensagem in texto for mensagem in ("Verification Success", "Verificação concluída")
                         ))
                         relato["confirmacao_texto"] = texto[:300]
-                        capturar_etapa(page, pasta, "Resposta do formulário do Google")
                         relato["resolucao_automatica_local"] = automatico and relato["validacao_servidor_confirmada"]
                         if relato["validacao_servidor_confirmada"]:
                             relato["desafio_adicional_visivel"] = False
@@ -155,18 +145,13 @@ def main(argv=None) -> int:
                 relato["erro"] = str(exc)
                 codigo = 1
             finally:
-                if page and not page.is_closed():
-                    try:
-                        relato["url_final"] = page.url
-                        page.screenshot(path=str(pasta / "tela.png"), full_page=True, timeout=5000)
-                    except PlaywrightError:
-                        pass
                 browser.close()
     except (Exception, KeyboardInterrupt) as exc:
         relato["erro"] = str(exc) or "Execução interrompida."
-    (pasta / "resultado.json").write_text(json.dumps(relato, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(relato, ensure_ascii=False, indent=2))
-    print(f"Evidências: {pasta}")
+    if args.json_stdout:
+        print("RELATORIO_JSON:" + json.dumps(relato, ensure_ascii=False, separators=(",", ":")), flush=True)
+    else:
+        print(json.dumps(relato, ensure_ascii=False, indent=2))
     print("\n" + "=" * 75)
     print(mensagem_resultado(relato, codigo))
     print("=" * 75, flush=True)

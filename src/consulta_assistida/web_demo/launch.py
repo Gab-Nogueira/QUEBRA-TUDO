@@ -10,11 +10,14 @@ import sys
 import time
 from urllib.request import urlopen
 
+ROOT = Path(__file__).resolve().parents[3]
+SOURCE_ROOT = ROOT / "src"
+
 
 def healthy(port):
     try:
         with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as response:
-            return json.load(response).get("service") == "rastro-demo"
+            return json.load(response).get("service") == "consulta-assistida-sem-retencao"
     except Exception:
         return False
 
@@ -25,21 +28,21 @@ def main():
     parser.add_argument("--chrome-visivel", action="store_true")
     args = parser.parse_args()
     if not healthy(args.port):
-        state_dir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CyolaConsultaAssistida" / "web_demo"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        command = [sys.executable, "-u", str(Path(__file__).with_name("app.py")), "--port", str(args.port)]
+        pythonpath = os.environ.get("PYTHONPATH", "")
+        if str(SOURCE_ROOT) not in pythonpath.split(os.pathsep):
+            pythonpath = str(SOURCE_ROOT) + (os.pathsep + pythonpath if pythonpath else "")
+        environment = dict(os.environ, PYTHONPATH=pythonpath, PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
+        command = [sys.executable, "-u", "-m", "consulta_assistida.web_demo.app", "--port", str(args.port)]
         if args.chrome_visivel:
             command.append("--chrome-visivel")
-        with (state_dir / "servidor.log").open("a", encoding="utf-8") as out, (state_dir / "servidor-erros.log").open("a", encoding="utf-8") as err:
-            process = subprocess.Popen(command, cwd=str(Path(__file__).parent), stdin=subprocess.DEVNULL,
-                                       stdout=out, stderr=err, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                                       env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1"))
-        (state_dir / "servidor.pid").write_text(str(process.pid), encoding="ascii")
+        process = subprocess.Popen(command, cwd=str(ROOT), stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), env=environment)
         print("Iniciando o Rastro...", flush=True)
         deadline = time.monotonic() + 60
         while not healthy(args.port):
             if process.poll() is not None or time.monotonic() > deadline:
-                print(f"Não foi possível iniciar. Confira os registros em: {state_dir}")
+                print("Nao foi possivel iniciar. Confira as dependencias e a porta configurada.")
                 return 1
             time.sleep(.6)
     print(f"\nRastro disponível: http://localhost:{args.port}")

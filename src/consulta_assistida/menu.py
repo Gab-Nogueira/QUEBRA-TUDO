@@ -5,14 +5,14 @@ import argparse
 
 def executar(opcao: str, objeto: str, navegador: str, manter_aberto: bool) -> int:
     if opcao in {"1", "v1"}:
-        from rastreamento_correios import main
+        from .rastreamento_correios import main
         argumentos = ["--navegador", navegador]
         if objeto:
             argumentos.extend(["--objeto", objeto])
         if manter_aberto:
             argumentos.append("--manter-aberto")
         return main(argumentos)
-    from testar_recaptcha import main
+    from .testar_recaptcha import main
     return main(["--automatico", "--navegador", navegador])
 
 

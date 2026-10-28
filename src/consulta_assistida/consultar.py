@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from datetime import datetime
 import json
 from pathlib import Path
@@ -11,10 +10,9 @@ import sys
 import time
 from typing import Callable
 from urllib.parse import urlparse
-from uuid import uuid4
 
 
-ROOT = Path(__file__).resolve().parent
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "consulta.html"
 
 
 class ConsultaError(Exception):
@@ -29,7 +27,7 @@ def validar_config(config: dict, *, permitir_demo: bool = False) -> dict:
         raise ConsultaError("Informe a URL do site na configuração.")
     parsed = urlparse(url)
     if not (parsed.scheme in {"http", "https"} and parsed.hostname):
-        if not (permitir_demo and url == (ROOT / "fixtures" / "consulta.html").as_uri()):
+        if not (permitir_demo and url == FIXTURE.as_uri()):
             raise ConsultaError("Informe uma URL HTTP ou HTTPS válida.")
     if parsed.hostname and parsed.hostname.endswith(".invalid"):
         raise ConsultaError("Substitua a URL de exemplo pelo endereço do site real.")
@@ -56,7 +54,7 @@ def validar_config(config: dict, *, permitir_demo: bool = False) -> dict:
 
 def config_demo() -> dict:
     return validar_config({
-        "url": (ROOT / "fixtures" / "consulta.html").as_uri(),
+        "url": FIXTURE.as_uri(),
         "navegador": "msedge",
         "campos": {"documento": "#documento"},
         "botao_consultar": "#consultar",
@@ -121,7 +119,7 @@ def executar_consulta(
     try:
         from playwright.sync_api import Error as PlaywrightError, sync_playwright
     except ImportError as exc:
-        raise ConsultaError("Execute INSTALAR.ps1 para instalar o Playwright no ambiente isolado.") from exc
+        raise ConsultaError("Execute scripts/INSTALAR.ps1 para instalar o Playwright no ambiente isolado.") from exc
 
     try:
         with sync_playwright() as playwright:
@@ -141,22 +139,10 @@ def executar_consulta(
         raise ConsultaError(f"Falha no navegador ou no seletor configurado: {exc}") from exc
 
 
-def salvar_resultado(destino: Path, config: dict, valores: dict, dados: dict, *, demo: bool) -> Path:
+def criar_relatorio(config: dict, valores: dict, dados: dict, *, demo: bool) -> dict:
     agora = datetime.now().astimezone()
-    pasta = destino / f"{agora:%Y%m%d-%H%M%S}-{uuid4().hex[:10]}"
-    pasta.mkdir(parents=True, exist_ok=False)
-    payload = {"modo": "demonstracao" if demo else "site_configurado", "data_hora": agora.isoformat(),
-               "url": config["url"], "consulta": valores, "resultado": dados}
-    (pasta / "resultado.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    with (pasta / "resultado.csv").open("w", encoding="utf-8-sig", newline="") as handle:
-        # A captura é texto. Evita que conteúdo do site seja tratado como fórmula no Excel.
-        def texto_csv(valor):
-            texto = str(valor)
-            return "'" + texto if texto.lstrip().startswith(("=", "+", "-", "@")) else texto
-        writer = csv.writer(handle, delimiter=";")
-        writer.writerow(texto_csv(chave) for chave in dados)
-        writer.writerow(texto_csv(valor) for valor in dados.values())
-    return pasta
+    return {"modo": "demonstracao" if demo else "site_configurado", "data_hora": agora.isoformat(),
+            "url": config["url"], "consulta": valores, "resultado": dados}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -164,7 +150,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, help="JSON com URL e seletores do site")
     parser.add_argument("--campo", action="append", default=[], metavar="NOME=VALOR")
     parser.add_argument("--demo", action="store_true", help="Usa somente uma página local com dados fictícios")
-    parser.add_argument("--saida", type=Path, default=ROOT / "resultados")
     args = parser.parse_args(argv)
     try:
         if args.demo and args.config:
@@ -187,9 +172,9 @@ def main(argv: list[str] | None = None) -> int:
             valores = {"documento": "DEMO-001"}
         print("DEMONSTRAÇÃO LOCAL: os dados são fictícios." if args.demo else "Consulta ao site configurado.")
         dados = executar_consulta(config, valores, permitir_demo=args.demo)
-        pasta = salvar_resultado(args.saida, config, valores, dados, demo=args.demo)
-        print(json.dumps(dados, ensure_ascii=False, indent=2))
-        print(f"Arquivos JSON e CSV salvos em: {pasta}")
+        relatorio = criar_relatorio(config, valores, dados, demo=args.demo)
+        print(json.dumps(relatorio, ensure_ascii=False, indent=2))
+        print("Resultado exibido apenas nesta execução; nenhum arquivo foi salvo.")
         return 0
     except (ConsultaError, OSError, ValueError) as exc:
         print(f"Consulta não concluída: {exc}", file=sys.stderr)
