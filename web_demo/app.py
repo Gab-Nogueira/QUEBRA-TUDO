@@ -232,6 +232,8 @@ class Jobs:
                         ("STJ: recarregando", 30, "Recarregando o formulário incompleto do STJ"),
                         ("STJ: enviando", 40, "Pesquisando os processos pelo nome da parte"),
                         ("STJ: verificando", 55, "Verificando o reCAPTCHA apresentado pelo site"),
+                        ("STJ: aguardando a verificação de segurança", 25, "Aguardando o STJ; se solicitado, conclua o desafio na janela do tribunal"),
+                        ("STJ: aguardando a verificação após envio", 60, "Aguardando o STJ; se solicitado, conclua o desafio na janela do tribunal"),
                         ("STJ: resultado", 90, "Conferindo os registros retornados pelo STJ"),
                     ):
                         if marker in line and progress >= job["progress"]:

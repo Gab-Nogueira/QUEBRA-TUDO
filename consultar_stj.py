@@ -11,10 +11,10 @@ import time
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-from playwright.sync_api import Error as PlaywrightError, sync_playwright
+from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 from capturas_execucao import capturar_etapa
-from testar_cloudflare import abrir_pagina, acionar_caixa, frames_cloudflare
+from testar_cloudflare import abrir_pagina, frames_cloudflare
 
 ROOT = Path(__file__).resolve().parent
 URL = "https://processo.stj.jus.br/processo/pesquisa/?aplicacao=processos.ea"
@@ -46,6 +46,11 @@ def total_exibido(texto: str) -> int | None:
 
 def nome_no_resultado(texto: str, nome: str) -> bool:
     titulo = f"Listando processos relacionados a(s) parte(s) com nome {nome}."
+    return titulo.casefold() in " ".join(texto.split()).casefold()
+
+
+def selecao_de_partes(texto: str, nome: str) -> bool:
+    titulo = f"Listando parte(s) com nome {nome}."
     return titulo.casefold() in " ".join(texto.split()).casefold()
 
 
@@ -100,7 +105,8 @@ def mensagem_resultado(relato: dict) -> str:
                 "O STJ respondeu sem registros públicos para o nome pesquisado. Isso não comprova inexistência de processos.")
     return {
         "coleta_parcial": "O STJ respondeu, mas a lista coletada está incompleta. Confira os registros disponíveis.",
-        "verificacao_pendente": "A verificação do site não foi concluída. A consulta ao STJ não foi confirmada.",
+        "selecao_parte_pendente": "O STJ exibiu uma lista de nomes semelhantes. Refine o nome pesquisado ou selecione a parte no portal do STJ. Essa lista ainda não é um resultado de processos.",
+        "verificacao_pendente": "O STJ não liberou a verificação de segurança no prazo. Tente novamente e, se solicitado, conclua o desafio na janela do tribunal. A consulta não foi confirmada.",
         "aplicacao_indisponivel": "O formulário do STJ abriu, mas seus componentes não terminaram de carregar. A pesquisa não foi enviada.",
         "falha_rede": "A conexão com o STJ falhou. Isso não significa ausência de processos.",
         "resposta_nao_confirmada": "O STJ não apresentou uma resposta completa no prazo. A consulta não foi confirmada.",
@@ -119,25 +125,84 @@ def pedido_da_pesquisa(request, nome: str) -> bool:
             and data.get("acao") == ["pushconsultarprocessoconsultalimitenaoatendidasjaincluidas"])
 
 
+def leitura_transitoria(exc: PlaywrightError) -> bool:
+    return isinstance(exc, PlaywrightTimeoutError) or any(marca in str(exc).lower() for marca in (
+        "execution context was destroyed", "cannot find context", "frame was detached",
+        "interrupted by another navigation",
+    ))
+
+
+def ler_corpo(page) -> str | None:
+    try:
+        return page.locator("body").inner_text(timeout=1000)
+    except PlaywrightError as exc:
+        if not leitura_transitoria(exc):
+            raise
+        return None
+
+
+def verificacao_de_acesso(page, texto: str) -> bool:
+    texto = texto.casefold()
+    return any(marca in texto for marca in (
+        "verificação automática em andamento", "verificacao automatica em andamento",
+        "aguarde a verificação automática", "verifique se você é humano",
+        "verify you are human", "checking your browser", "just a moment",
+    )) or bool(frames_cloudflare(page))
+
+
+def avisar_verificacao(page, relato: dict, pasta: Path, etapa: str):
+    relato["verificacao_acesso_observada"] = True
+    if relato.get("etapa_verificacao_avisada") != etapa:
+        relato["etapa_verificacao_avisada"] = etapa
+        # A janela permanece disponível para o usuário concluir um desafio.
+        # Não interage com o widget nem presume liberação a partir de tokens.
+        fase = "após envio" if etapa == "pesquisa" else "de segurança"
+        print(f"STJ: aguardando a verificação {fase}; se solicitado, conclua o desafio na janela do tribunal...", flush=True)
+        capturar_etapa(page, pasta, "STJ aguardando a verificação de segurança")
+
+
 def aguardar_formulario(page, relato: dict, pasta: Path) -> bool:
     print("STJ: abrindo a consulta pública...", flush=True)
     relato["tentativas_abertura"] = []
     relato["verificacao_inicial_observada"] = False
+    prazo = time.monotonic() + 120
     for numero in (1, 2):
-        resposta = page.goto(URL, wait_until="domcontentloaded", timeout=60000)
+        try:
+            resposta = page.goto(URL, wait_until="domcontentloaded", timeout=30000)
+        except PlaywrightError as exc:
+            if not leitura_transitoria(exc):
+                raise
+            # O desafio pode redirecionar antes do DOMContentLoaded.
+            resposta = None
+            relato["navegacao_inicial_interrompida"] = True
         status = resposta.status if resposta else None
         if numero == 1:
             relato["http_status_inicial"] = status
         relato["verificacao_inicial_observada"] |= status == 403
         tentativa = {"numero": numero, "http_status": status, "formulario_detectado": False, "aplicacao_inicializada": False}
         relato["tentativas_abertura"].append(tentativa)
-        prazo = time.monotonic() + 60
-        acionado = False
         incompleto_desde = None
         while time.monotonic() < prazo:
-            if page.locator(CAMPO).is_visible():
+            texto = ler_corpo(page)
+            if texto is None:
+                page.wait_for_timeout(500)
+                continue
+            if verificacao_de_acesso(page, texto):
+                relato["verificacao_inicial_observada"] = True
+                avisar_verificacao(page, relato, pasta, "abertura")
+                incompleto_desde = None
+                page.wait_for_timeout(500)
+                continue
+            try:
+                visivel = page.locator(CAMPO).is_visible()
+            except PlaywrightError as exc:
+                if not leitura_transitoria(exc):
+                    raise
+                page.wait_for_timeout(500)
+                continue
+            if visivel:
                 tentativa["formulario_detectado"] = True
-                if "{{cabecalhoErro}}" not in page.locator("body").inner_text():
+                if "{{cabecalhoErro}}" not in texto:
                     tentativa["aplicacao_inicializada"] = True
                     relato["formulario_carregado"] = True
                     return True
@@ -145,13 +210,8 @@ def aguardar_formulario(page, relato: dict, pasta: Path) -> bool:
                     incompleto_desde = time.monotonic()
                 if time.monotonic() - incompleto_desde >= 15:
                     break
-            frames = frames_cloudflare(page)
-            if frames and not acionado:
-                relato["verificacao_inicial_observada"] = True
-                try:
-                    acionado = bool(acionar_caixa(page, frames[0]))
-                except PlaywrightError:
-                    pass
+            else:
+                incompleto_desde = None
             page.wait_for_timeout(500)
         if tentativa["formulario_detectado"] and numero == 1:
             capturar_etapa(page, pasta, "Formulário do STJ carregado parcialmente")
@@ -216,8 +276,19 @@ def pesquisar(page, nome: str, relato: dict, pasta: Path) -> int:
         page.locator(BOTAO).click()
         prazo = time.monotonic() + 90
         while time.monotonic() < prazo:
-            texto = page.locator("body").inner_text()
+            texto = ler_corpo(page)
+            if texto is None:
+                page.wait_for_timeout(500)
+                continue
+            if verificacao_de_acesso(page, texto):
+                avisar_verificacao(page, relato, pasta, "pesquisa")
+                page.wait_for_timeout(500)
+                continue
             total = total_exibido(texto)
+            if total is not None and selecao_de_partes(texto, nome):
+                relato.update(resultado="selecao_parte_pendente", total_nomes_encontrados=total)
+                capturar_etapa(page, pasta, "STJ solicita selecionar uma parte; processos ainda não consultados")
+                return 1
             if total is not None and relato["resposta_pesquisa_recebida"] and nome_no_resultado(texto, nome):
                 processos = extrair_processos(texto)
                 relato.update(nome_resultado_confirmado=True, total_encontrados=total, processos=processos,
@@ -233,7 +304,7 @@ def pesquisar(page, nome: str, relato: dict, pasta: Path) -> int:
             if relato.get("motivo_verificacao"):
                 break
             page.wait_for_timeout(500)
-        relato["resultado"] = "verificacao_pendente" if relato["recaptcha_observado"] else "resposta_nao_confirmada"
+        relato["resultado"] = "verificacao_pendente" if (relato["recaptcha_observado"] or relato.get("etapa_verificacao_avisada") == "pesquisa") else "resposta_nao_confirmada"
         return 1
     finally:
         page.remove_listener("response", receber)
@@ -258,12 +329,19 @@ def main(argv=None) -> int:
                   escopo="consulta_publica_stj_nome_da_parte")
     inicio = time.monotonic()
     codigo = 2
+    pesquisa_encerrada = False
     try:
         with sync_playwright() as playwright:
             with abrir_pagina(playwright, navegador=args.navegador, headless=args.headless, modo_playwright=False) as page:
                 page.set_default_timeout(10000)
                 try:
                     codigo = pesquisar(page, args.parte, relato, pasta)
+                    pesquisa_encerrada = True
+                except PlaywrightTimeoutError:
+                    relato["resultado"] = ("verificacao_pendente" if relato.get("verificacao_acesso_observada")
+                                           else "resposta_nao_confirmada")
+                    codigo = 1
+                    pesquisa_encerrada = True
                 finally:
                     if not page.is_closed():
                         try:
@@ -274,7 +352,11 @@ def main(argv=None) -> int:
         relato["resultado"] = "interrompido"
         codigo = 2
     except Exception as exc:
-        relato.update(resultado="erro_tecnico", erro_tipo=type(exc).__name__)
+        if pesquisa_encerrada and codigo == 1:
+            # Uma falha ao fechar o navegador não deve apagar o motivo da consulta pendente.
+            relato["erro_encerramento_tipo"] = type(exc).__name__
+        else:
+            relato.update(resultado="erro_tecnico", erro_tipo=type(exc).__name__)
         codigo = 2
     relato["duracao_segundos"] = round(time.monotonic() - inicio, 2)
     relato["mensagem"] = mensagem_resultado(relato)

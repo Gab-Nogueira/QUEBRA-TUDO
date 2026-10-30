@@ -1,3 +1,10 @@
+# Correção do STJ — 30/10/2026
+
+- Aguarda a verificação de segurança por até dois minutos e informa quando o usuário deve concluir um desafio na janela do tribunal.
+- Tolera leituras interrompidas durante redirecionamentos e mantém o motivo da consulta pendente quando o navegador falha ao encerrar.
+- Distingue a seleção de nomes semelhantes da listagem de processos.
+- Atualiza as etapas exibidas na interface e inclui testes de regressão.
+
 # Publicação de 30/10/2026
 
 - Atualiza a branch principal e o Download ZIP com a versão local atual.

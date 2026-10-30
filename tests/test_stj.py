@@ -1,13 +1,19 @@
 """Confere a identidade da pesquisa e não transforma falhas em ausência de processos."""
 
 from pathlib import Path
+from contextlib import contextmanager
+import json
+import subprocess
+import tempfile
 import sys
 import unittest
 from unittest.mock import Mock, patch
+from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import menu
+import consultar_stj
 from consultar_stj import (URL, aguardar_formulario, consulta_confirmada, extrair_processos, mensagem_resultado,
                            nome_no_resultado, normalizar_nome, pedido_da_pesquisa, total_exibido)
 
@@ -66,6 +72,16 @@ class StjTests(unittest.TestCase):
         self.assertFalse(consulta_confirmada({"resposta_emitida": True, "http_status_consulta": 200}, NOME))
         self.assertIn("não confirma o vínculo", mensagem_resultado(good))
 
+    def test_lista_de_nomes_nao_e_lista_de_processos(self):
+        texto = f"Listando parte(s) com nome {NOME}.\nPesquisa resultou em 3 registro(s)!"
+        self.assertTrue(consultar_stj.selecao_de_partes(texto, NOME))
+        self.assertFalse(consultar_stj.selecao_de_partes(texto, "OUTRA EMPRESA"))
+        self.assertFalse(nome_no_resultado(texto, NOME))
+        self.assertFalse(consultar_stj.selecao_de_partes(TEXTO, NOME))
+        report = dict(resultado="selecao_parte_pendente", total_nomes_encontrados=3)
+        self.assertFalse(consulta_confirmada(report))
+        self.assertIn("nomes semelhantes", mensagem_resultado(report))
+
     def test_requisicao_exige_nome_criterio_acao_e_destino_corretos(self):
         fields = dict(parteNome=NOME, aplicacao="processos.ea", opcoesFoneticaPhonosParte="2",
                       acao="pushconsultarprocessoconsultalimitenaoatendidasjaincluidas")
@@ -91,7 +107,7 @@ class StjTests(unittest.TestCase):
                 campo, corpo = Mock(), Mock()
                 page.locator.side_effect = lambda selector: corpo if selector == "body" else campo
                 campo.is_visible.return_value = True
-                corpo.inner_text.side_effect = lambda: "Nome da PARTE" if recupera and page.goto.call_count == 2 else "{{cabecalhoErro}}"
+                corpo.inner_text.side_effect = lambda **kwargs: "Nome da PARTE" if recupera and page.goto.call_count == 2 else "{{cabecalhoErro}}"
                 tempo = [0.0]
                 page.wait_for_timeout.side_effect = lambda ms: tempo.__setitem__(0, tempo[0] + ms / 1000)
                 report = {}
@@ -104,6 +120,60 @@ class StjTests(unittest.TestCase):
                 self.assertEqual(report["tentativas_abertura"][1]["aplicacao_inicializada"], recupera)
                 if not recupera:
                     self.assertEqual(report["resultado"], "aplicacao_indisponivel")
+
+    def test_verificacao_sem_iframe_aguarda_e_pode_recuperar(self):
+        for recupera in (False, True):
+            with self.subTest(recupera=recupera):
+                page = Mock()
+                page.goto.return_value.status = 200
+                corpo, campo = Mock(), Mock()
+                page.locator.side_effect = lambda selector: corpo if selector == "body" else campo
+                tempo = [0.0]
+                corpo.inner_text.side_effect = lambda **kw: (
+                    "Nome da PARTE" if recupera and tempo[0] >= 2 else "Verificação automática em andamento.")
+                campo.is_visible.return_value = True
+                page.wait_for_timeout.side_effect = lambda ms: tempo.__setitem__(0, tempo[0] + ms / 1000)
+                relato = {}
+                with patch("consultar_stj.time.monotonic", side_effect=lambda: tempo[0]), \
+                     patch("consultar_stj.frames_cloudflare", return_value=[]), \
+                     patch("consultar_stj.capturar_etapa"), patch("builtins.print"):
+                    self.assertEqual(aguardar_formulario(page, relato, Path(".")), recupera)
+                self.assertEqual(page.goto.call_count, 1)
+                self.assertTrue(relato["verificacao_acesso_observada"])
+                campo.fill.assert_not_called()
+                if not recupera:
+                    self.assertEqual(relato["resultado"], "verificacao_pendente")
+                    self.assertEqual(tempo[0], 120)
+                    self.assertFalse(consulta_confirmada(relato))
+
+    def test_leitura_durante_redirecionamento_e_timeout_pode_repetir(self):
+        page = Mock()
+        for exc in (PlaywrightTimeoutError("body ausente"),
+                    PlaywrightError("Execution context was destroyed")):
+            page.locator.return_value.inner_text.side_effect = exc
+            self.assertIsNone(consultar_stj.ler_corpo(page))
+        page.locator.return_value.inner_text.side_effect = PlaywrightError("Target page has been closed")
+        with self.assertRaises(PlaywrightError):
+            consultar_stj.ler_corpo(page)
+
+    def test_falha_no_fechamento_preserva_verificacao_pendente(self):
+        @contextmanager
+        def browser(*args, **kwargs):
+            yield Mock()
+            raise subprocess.TimeoutExpired("browser", 10)
+
+        def pesquisa(page, nome, relato, pasta):
+            relato["resultado"] = "verificacao_pendente"
+            return 1
+
+        with tempfile.TemporaryDirectory() as temp, patch("consultar_stj.ROOT", Path(temp)), \
+             patch("consultar_stj.sync_playwright"), patch("consultar_stj.abrir_pagina", browser), \
+             patch("consultar_stj.pesquisar", side_effect=pesquisa), patch("builtins.print"):
+            self.assertEqual(consultar_stj.main(["--parte", NOME]), 2)
+            relato = json.loads(next(Path(temp).glob("evidencias_stj/*/resultado.json")).read_text(encoding="utf-8"))
+        self.assertEqual(relato["resultado"], "verificacao_pendente")
+        self.assertEqual(relato["erro_encerramento_tipo"], "TimeoutExpired")
+        self.assertFalse(consulta_confirmada(relato))
 
 
 if __name__ == "__main__":
