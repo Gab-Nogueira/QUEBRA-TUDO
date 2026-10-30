@@ -5,6 +5,16 @@ evidencias_correios/
 evidencias_cloudflare/
 evidencias_trf3/
 evidencias_stj/
+evidencias_tjsp/
 web_demo/qa/
 config.local.json
 *.pyc
+evidencias_*/
+output/
+tmp/
+.venv/
+venv/
+.env
+.env.*
+*.log
+*.bak

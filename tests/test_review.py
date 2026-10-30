@@ -123,6 +123,25 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(launch.main([]), 1)
             start.assert_not_called()
 
+    def test_launcher_abre_navegador_so_quando_solicitado_e_servico_compativel(self):
+        expected = {"project": "atual", "revision": "nova"}
+        current = dict(service="rastro-demo", ok=True, instance=expected, headless=True)
+        with patch("web_demo.launch.identity", return_value=expected), \
+             patch("web_demo.launch.health", return_value=current), \
+             patch("web_demo.launch.socket.getaddrinfo", return_value=[]), \
+             patch("web_demo.launch.webbrowser.open") as browser, patch("builtins.print"):
+            self.assertEqual(launch.main(["--port", "5086"]), 0)
+            browser.assert_not_called()
+            self.assertEqual(launch.main(["--port", "5086", "--abrir"]), 0)
+            browser.assert_called_once_with("http://localhost:5086")
+
+    def test_launcher_nao_abre_navegador_se_porta_ocupada(self):
+        with patch("web_demo.launch.health", return_value=None), \
+             patch("web_demo.launch.port_available", return_value=False), \
+             patch("web_demo.launch.webbrowser.open") as browser, patch("builtins.print"):
+            self.assertEqual(launch.main(["--abrir"]), 1)
+            browser.assert_not_called()
+
     def test_estados_de_copias_e_portas_diferentes_sao_separados(self):
         self.assertNotEqual(state_directory(5085, "copia1"), state_directory(5085, "copia2"))
         self.assertNotEqual(state_directory(5085, "copia1"), state_directory(5086, "copia1"))

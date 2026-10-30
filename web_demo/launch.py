@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+import webbrowser
 from urllib.request import urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -41,6 +42,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=5085)
     parser.add_argument("--chrome-visivel", action="store_true")
+    parser.add_argument("--abrir", action="store_true", help="Abre o painel no navegador padrão")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("Informe uma porta entre 1 e 65535.")
@@ -61,18 +63,20 @@ def main(argv=None):
                                        stdout=out, stderr=err, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                                        env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1"))
         (state_dir / "servidor.pid").write_text(str(process.pid), encoding="ascii")
-        print("Iniciando o Rastro...", flush=True)
+        print("Iniciando o Quebra Tudo...", flush=True)
         deadline = time.monotonic() + 60
         while not compatible(health(args.port), expected, not args.chrome_visivel):
             if process.poll() is not None or time.monotonic() > deadline:
                 print(f"Não foi possível iniciar. Confira os registros em: {state_dir}")
                 return 1
             time.sleep(.6)
-    print(f"\nRastro disponível: http://localhost:{args.port}")
+    print(f"\nQuebra Tudo disponível: http://localhost:{args.port}")
     for ip in sorted({item[4][0] for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)}):
         if not ip.startswith(("127.", "169.254.")):
             print(f"Acesso na rede: http://{ip}:{args.port}")
     print("\nAbra o endereço no navegador. O serviço continua ativo em segundo plano.")
+    if args.abrir:
+        webbrowser.open(f"http://localhost:{args.port}")
     return 0
 
 

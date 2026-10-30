@@ -13,7 +13,7 @@ if errorlevel 1 (
     "%consultaPython%" -m pip install -r "%~dp0requirements_web.txt"
     if errorlevel 1 exit /b 2
 )
-"%consultaPython%" "%~dp0web_demo\launch.py" %*
+"%consultaPython%" "%~dp0web_demo\launch.py" --abrir %*
 set "consultaExit=%errorlevel%"
 pause
 exit /b %consultaExit%

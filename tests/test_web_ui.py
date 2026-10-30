@@ -98,6 +98,31 @@ class WebUiTests(unittest.TestCase):
             self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), width)
             self.assertEqual(self.page.locator("[data-test]").count(), 5)
 
+    def test_tjsp_numero_ficticio_preservado_na_consulta(self):
+        with patch("web_demo.app.threading.Thread.start"):
+            self.page.locator("#tjsp-processo").fill("5364723-18.2024.8.26.0000")
+            self.page.locator("#tjsp-processo").press("Enter")
+            self.page.wait_for_function("document.querySelector('#run-status').textContent === 'EM ANDAMENTO'")
+        self.assertEqual(self.page.locator("#tjsp-processo").input_value(), "5364723-18.2024.8.26.0000")
+        self.assertEqual(self.jobs.items[self.jobs.active]['code'], '5364723-18.2024.8.26.0000')
+        self.assertEqual(self.jobs.items[self.jobs.active]['instancia'], 'SP')
+        self.assertEqual(self.page.locator('#tjsp-instancia').input_value(), 'SP')
+
+    def test_tjsp_token_sem_pagina_nao_mostra_processo_aberto(self):
+        self.page.route("**/artifacts/tela.png", lambda route: route.fulfill(status=404))
+        job = dict(id="ui-tjsp", kind="tjsp", code="0000001-48.2024.8.26.0000", status="falhou",
+                   verified=False, created_at="2026-10-28T12:00:00Z", finished_at="2026-10-28T12:01:00Z",
+                   message="Consulta sem confirmação", frames=[], result={"resposta_widget_recebida": True, "consulta_enviada": True})
+        self.page.evaluate("job => render(job)", job)
+        self.assertEqual(self.page.locator("#run-status").inner_text(), "NÃO CONFIRMADO")
+        self.assertIn("Tela de retorno registrada · não confirmado", self.page.locator(".tjsp-steps").inner_text())
+        job.update(status="concluido", verified=True)
+        self.page.evaluate("job => render(job)", job)
+        self.assertEqual(self.page.locator("#run-status").inner_text(), "RETORNO RECEBIDO")
+        job['result']['resultado'] = 'processo_aberto'
+        self.page.evaluate("job => render(job)", job)
+        self.assertEqual(self.page.locator("#run-status").inner_text(), "PROCESSO ABERTO")
+
     def test_sucesso_antigo_nao_e_reapresentado_ao_recarregar(self):
         with patch("web_demo.app.threading.Thread.start"):
             job = self.jobs.start("recaptcha", "")
@@ -107,6 +132,63 @@ class WebUiTests(unittest.TestCase):
         self.page.wait_for_function("document.querySelector('#connection').textContent === 'Disponível'")
         self.assertTrue(self.page.locator("#empty-state").is_visible())
         self.assertFalse(self.page.locator("#execution").is_visible())
+
+    def test_demonstracao_nao_consulta_api_nem_altera_formulario(self):
+        self.page.locator("#stj-parte").fill("Nome preservado ao apresentar")
+        requests = []
+        self.page.on("request", lambda request: requests.append((request.method, request.url)))
+        self.page.locator("[data-demo-open]").first.click()
+        self.assertIn("DADOS FICTÍCIOS", self.page.locator(".demo-badge").inner_text())
+        self.page.locator("#demo-next").click()
+        self.page.locator("#demo-next").click()
+        self.assertIn("3", self.page.locator(".demo-result-count").inner_text())
+        self.assertIn("inventados", self.page.locator("#demo-stage").inner_text())
+        self.page.locator("#demo-next").click()
+        self.assertEqual(self.page.locator("#demo-counter").inner_text(), "ETAPA 1 DE 3")
+        self.page.keyboard.press("Escape")
+        self.assertTrue(self.page.locator("#workspace").is_visible())
+        self.assertEqual(self.page.locator("#stj-parte").input_value(), "Nome preservado ao apresentar")
+        self.assertEqual(requests, [])
+        self.assertIsNone(self.jobs.active)
+
+    def test_demonstracao_responsiva_e_abertura_direta(self):
+        self.page.goto(f"http://127.0.0.1:{self.server.server_port}/#demonstracao")
+        self.page.locator("#demo-view").wait_for(state="visible")
+        self.assertTrue(self.page.locator("#demo-view").is_visible())
+        for width in (1366, 768, 390, 320):
+            self.page.set_viewport_size({"width": width, "height": 900})
+            for step in range(3):
+                self.page.locator(f'[data-demo-step="{step}"]').click()
+                self.assertLessEqual(self.page.evaluate("document.documentElement.scrollWidth"), width)
+        self.page.locator('#demo-close').click()
+        self.assertTrue(self.page.locator("#workspace").is_visible())
+
+    def test_resultado_parcial_e_vazio_nao_prometem_ausencia_de_processos(self):
+        job = dict(id="ui-exemplo", kind="stj", code="EMPRESA FICTICIA", status="falhou",
+                   verified=False, created_at="2026-10-28T12:00:00Z", finished_at="2026-10-28T12:01:00Z",
+                   message="Lista incompleta", frames=[], result={"resultado": "coleta_parcial",
+                   "total_encontrados": 2, "processos": [dict(numero="EXEMPLO-01", partes="Nome ilustrativo")]})
+        self.page.route("**/artifacts/tela.png", lambda route: route.fulfill(status=404))
+        self.page.evaluate("job => render(job)", job)
+        self.assertEqual(self.page.locator("#run-status").inner_text(), "RESULTADO PARCIAL")
+        self.assertIn("1 registro coletado de 2", self.page.locator("#result-content").inner_text())
+        job.update(status="concluido", verified=True, message="Nenhum registro retornado",
+                   result={"total_encontrados": 0, "processos": []})
+        self.page.evaluate("job => render(job)", job)
+        self.assertIn("Nenhum registro encontrado", self.page.locator(".result-title").inner_text())
+        self.assertIn("não significa ausência", self.page.locator("#result-content").inner_text())
+
+    def test_enter_no_cnpj_envia_uma_unica_consulta(self):
+        submissions = []
+        def reject(route):
+            submissions.append(route.request.post_data_json)
+            route.fulfill(status=400, content_type="application/json", body='{"error":"Teste sem consulta externa"}')
+        self.page.route("**/api/jobs", reject)
+        self.page.locator("#trf3-cnpj").fill("00000000000000")
+        self.page.locator("#trf3-cnpj").press("Enter")
+        self.page.locator("#request-error").wait_for(state="visible")
+        self.assertEqual(submissions, [dict(kind="trf3", code="00000000000000")])
+        self.assertTrue(self.page.locator("#test-trf3").is_enabled())
 
     def test_troca_de_captura_oculta_imagem_anterior_ate_carregar_a_nova(self):
         png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4l8AAAAASUVORK5CYII=")

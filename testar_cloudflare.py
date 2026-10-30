@@ -197,7 +197,8 @@ def testar_pagina(page, relato: dict, *, espera: int, etapa) -> int:
         if relato["formulario_carregado"] and relato["widget_detectado"] and relato["resposta_emitida"]:
             relato.update(resultado="widget_liberado_sem_consulta", liberacao_automatica_observada=True)
             print("TJSP: resposta emitida pelo Cloudflare; consulta processual não realizada.", flush=True)
-            etapa("Cloudflare liberado; consulta processual não realizada")
+            page.wait_for_timeout(800)
+            etapa("Resposta da verificação recebida; consulta processual não realizada")
             return 0
         if not relato["interacao_automatica"] and time.monotonic() >= proxima_interacao:
             for frame in frames_cloudflare(page):

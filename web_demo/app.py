@@ -1,4 +1,4 @@
-"""Demonstração interna do Rastro, com execução local dos testes existentes."""
+"""Interface local do Quebra Tudo, com execução das consultas e testes existentes."""
 
 from __future__ import annotations
 
@@ -24,12 +24,13 @@ from rastreamento_correios import normalizar_objeto
 from testar_cloudflare import liberacao_observada, mensagem_resultado
 from consultar_trf3 import normalizar_cnpj, consulta_confirmada as trf3_confirmada, mensagem_resultado as mensagem_trf3
 from consultar_stj import normalizar_nome, consulta_confirmada as stj_confirmada, mensagem_resultado as mensagem_stj
+from consultar_tjsp import normalizar_processo, resposta_confirmada as tjsp_confirmada, mensagem_resultado as mensagem_tjsp
 from web_demo.runtime import identity, state_directory
 
 INSTANCE = identity()
 
 KINDS = {"rastreamento": "Rastreamento dos Correios", "letras": "Leitura de letras", "recaptcha": "Verificação reCAPTCHA",
-         "cloudflare": "Cloudflare Turnstile · TJSP", "trf3": "TRF3 · Consulta por CNPJ", "stj": "STJ · Nome da parte"}
+         "cloudflare": "Cloudflare Turnstile · TJSP", "trf3": "TRF3 · Consulta por CNPJ", "stj": "STJ · Nome da parte", "tjsp": "TJSP · Número do processo"}
 EXAMPLE = "AA123456785BR"
 
 
@@ -40,6 +41,8 @@ def utc_now():
 def classify_report(kind: str, report: dict, code: str = "") -> tuple[bool, str]:
     if not isinstance(report, dict) or not isinstance(kind, str) or kind not in KINDS:
         return False, "O relatório desta execução está ausente ou em formato inválido."
+    if kind == "tjsp":
+        return tjsp_confirmada(report, code), mensagem_tjsp(report)
     if kind == "stj":
         if code and report.get("nome_consultado") != code:
             return False, "O nome do retorno não corresponde ao solicitado. A consulta não foi confirmada."
@@ -119,7 +122,7 @@ class Jobs:
         with self.lock:
             return [self.public(job) for job in sorted(self.items.values(), key=lambda item: item["created_at"], reverse=True)[:15]]
 
-    def start(self, kind, code):
+    def start(self, kind, code, instancia="SP"):
         with self.lock:
             if self.active:
                 return None
@@ -127,6 +130,8 @@ class Jobs:
             job = {"id": ident, "kind": kind, "title": KINDS[kind], "code": code, "example": code == EXAMPLE,
                    "created_at": utc_now(), "status": "executando", "progress": 5, "phase": "Preparando a consulta",
                    "message": "O teste está começando.", "result": None, "frames": []}
+            if kind == "tjsp":
+                job["instancia"] = instancia
             self.items[ident] = job
             self.active = ident
             try:
@@ -145,7 +150,9 @@ class Jobs:
 
     def run(self, ident):
         job = self.items[ident]
-        if job["kind"] == "stj":
+        if job["kind"] == "tjsp":
+            args = [sys.executable, "-u", str(ROOT / "consultar_tjsp.py"), "--processo", job["code"], "--instancia", job.get("instancia", "SP"), "--navegador", "chrome"]
+        elif job["kind"] == "stj":
             args = [sys.executable, "-u", str(ROOT / "consultar_stj.py"), "--parte", job["code"], "--navegador", "chrome"]
         elif job["kind"] == "trf3":
             args = [sys.executable, "-u", str(ROOT / "consultar_trf3.py"), "--cnpj", job["code"], "--navegador", "chrome"]
@@ -157,7 +164,7 @@ class Jobs:
             args = [sys.executable, "-u", str(ROOT / "rastreamento_correios.py"), "--navegador", "chrome", "--sem-copiar"]
             if job["code"]:
                 args += ["--objeto", job["code"]]
-        if self.headless and job["kind"] not in {"cloudflare", "trf3", "stj"}:
+        if self.headless and job["kind"] not in {"cloudflare", "trf3", "stj", "tjsp"}:
             args.append("--headless")
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
         evidence = None
@@ -190,7 +197,7 @@ class Jobs:
                         job["recognized_text"] = line.removeprefix("CAPTCHA RECONHECIDO: ")
                 if line.startswith("Evidências: "):
                     evidence = Path(line.partition(": ")[2]).resolve()
-                    roots = tuple((ROOT / name).resolve() for name in ("evidencias_correios", "evidencias_recaptcha", "evidencias_cloudflare", "evidencias_trf3", "evidencias_stj"))
+                    roots = tuple((ROOT / name).resolve() for name in ("evidencias_correios", "evidencias_recaptcha", "evidencias_cloudflare", "evidencias_trf3", "evidencias_stj", "evidencias_tjsp"))
                     if any(evidence.is_relative_to(root) for root in roots):
                         with self.lock:
                             job["_evidence"] = str(evidence)
@@ -210,8 +217,12 @@ class Jobs:
                         ("RASTREAMENTO DO OBJETO", 90, "Organizando os dados da encomenda"),
                         ("TJSP: abrindo", 20, "Abrindo a consulta pública do TJSP"),
                         ("TJSP: aguardando", 40, "Aguardando a verificação do Cloudflare"),
+                        ("TJSP: aguardando a verificação de acesso", 40, "Se o TJSP solicitar, conclua a verificação na janela do tribunal"),
+                        ("TJSP: enviando", 65, "Enviando o número e aguardando a página do processo"),
+                        ("TJSP: processo aberto", 95, "Página do processo aberta; número conferido"),
+                        ("TJSP: retorno recebido", 95, "O TJSP respondeu; tela de retorno registrada"),
                         ("TJSP: acionando", 55, "Verificando o resultado da interação com o desafio"),
-                        ("TJSP: resposta emitida", 90, "Desafio liberado; consulta processual ainda não testada"),
+                        ("TJSP: resposta emitida", 90, "Resposta do widget recebida; consulta processual ainda não testada"),
                         ("TRF3: abrindo", 20, "Abrindo a consulta pública do TRF3"),
                         ("TRF3: enviando", 40, "Pesquisando os processos do CNPJ informado"),
                         ("TRF3: verificando", 55, "Verificando o reCAPTCHA apresentado pelo site"),
@@ -229,7 +240,7 @@ class Jobs:
             timer.cancel()
             if timed_out.is_set():
                 raise RuntimeError("O site demorou mais que o esperado. Esta tentativa foi encerrada; você pode tentar novamente.")
-            roots = tuple((ROOT / name).resolve() for name in ("evidencias_correios", "evidencias_recaptcha", "evidencias_cloudflare", "evidencias_trf3", "evidencias_stj"))
+            roots = tuple((ROOT / name).resolve() for name in ("evidencias_correios", "evidencias_recaptcha", "evidencias_cloudflare", "evidencias_trf3", "evidencias_stj", "evidencias_tjsp"))
             if evidence is None or not any(evidence.is_relative_to(root) for root in roots):
                 raise RuntimeError("Não foi possível obter o retorno desta execução.")
             report = json.loads((evidence / "resultado.json").read_text(encoding="utf-8"))
@@ -258,7 +269,7 @@ class Jobs:
         if not job or not job.get("_evidence"):
             return None
         evidence = Path(job["_evidence"]).resolve()
-        allowed = tuple((ROOT / name).resolve() for name in ("evidencias_correios", "evidencias_recaptcha", "evidencias_cloudflare", "evidencias_trf3", "evidencias_stj"))
+        allowed = tuple((ROOT / name).resolve() for name in ("evidencias_correios", "evidencias_recaptcha", "evidencias_cloudflare", "evidencias_trf3", "evidencias_stj", "evidencias_tjsp"))
         if not any(evidence.is_relative_to(base) for base in allowed):
             return None
         if name == "captcha.png":
@@ -341,17 +352,20 @@ def create_app(*, state_dir=None, headless=True):
         if not isinstance(data, dict) or not isinstance(data.get("kind"), str) or data["kind"] not in KINDS:
             return {"error": "Escolha uma das opções de teste disponíveis."}, 400
         kind = data["kind"]
+        instancia = data.get("instancia", "SP") if kind == "tjsp" else "SP"
+        if not isinstance(instancia, str) or instancia not in {"SP", "TJSP"}:
+            return {"error": "Escolha primeiro ou segundo grau para consultar o TJSP."}, 400
         code = data.get("code", "")
         if not isinstance(code, str):
             return {"error": "Informe o nome, CNPJ ou código de rastreamento como texto."}, 400
         try:
-            code = normalizar_nome(code) if kind == "stj" else normalizar_cnpj(code) if kind == "trf3" else normalizar_objeto(code) if kind == "rastreamento" else ""
+            code = normalizar_processo(code) if kind == "tjsp" else normalizar_nome(code) if kind == "stj" else normalizar_cnpj(code) if kind == "trf3" else normalizar_objeto(code) if kind == "rastreamento" else ""
             if kind == "rastreamento" and not code:
                 raise ValueError("Informe o código da encomenda ou use o código de exemplo.")
         except ValueError as exc:
             return {"error": str(exc)}, 400
         try:
-            job = jobs.start(kind, code)
+            job = jobs.start(kind, code, instancia)
         except (OSError, RuntimeError):
             app.logger.exception("Não foi possível iniciar a execução")
             return {"error": "Não foi possível iniciar o teste. Confira o serviço e tente novamente."}, 503
@@ -405,6 +419,6 @@ if __name__ == "__main__":
     parser.add_argument("--chrome-visivel", action="store_true")
     args = parser.parse_args()
     from waitress import serve
-    print(f"Rastro: http://localhost:{args.port}", flush=True)
+    print(f"Quebra Tudo: http://localhost:{args.port}", flush=True)
     state_dir = state_directory(args.port, INSTANCE["project"])
     serve(create_app(state_dir=state_dir, headless=not args.chrome_visivel), host=args.host, port=args.port, threads=6)
